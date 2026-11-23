@@ -114,8 +114,15 @@ def snapshot_device(session, system_slice, dest, device_id, expected_build, entr
 
     真机路径，需要 ramdisk 会话。快照生成后校验 SystemVersion 的 build。
     """
-    entries = tuple(union() if entries is None else entries)
     session.mount(system_slice, "/mnt1", ro=True)
+    if entries is None:
+        try:
+            is_n61 = session.sh("test -e /mnt1/usr/share/firmware/multitouch/N61.mtprops && echo 1 || echo 0").strip() == b"1"
+        except Exception:
+            is_n61 = False
+        entries = tuple(union(model="N61" if is_n61 else "N56"))
+    else:
+        entries = tuple(entries)
     staging = tempfile.mkdtemp(prefix="n56-donor-")
     try:
         names = " ".join(shlex.quote(e) for e in entries)
@@ -126,9 +133,11 @@ def snapshot_device(session, system_slice, dest, device_id, expected_build, entr
                                     stdin=producer.stdout, stderr=subprocess.PIPE)
         producer.stdout.close()
         _, err = consumer.communicate()
+        p_err = producer.stderr.read()
         producer.wait()
         if producer.returncode != 0 or consumer.returncode != 0:
-            raise DonorError("白名单流式拷贝失败: " + (err or b"").decode(errors="replace")[:800])
+            full_err = ((err or b"") + b"\n" + (p_err or b"")).decode(errors="replace").strip()
+            raise DonorError("白名单流式拷贝失败: " + full_err[:800])
         version_path = os.path.join(staging, "System/Library/CoreServices/SystemVersion.plist")
         with open(version_path, "rb") as stream:
             build = plistlib.load(stream).get("ProductBuildVersion", "")
@@ -153,8 +162,12 @@ def verify(dest, entries=None):
         return [f"缺少 {MANIFEST}: {dest}"]
     with open(path, encoding="utf-8") as stream:
         manifest = json.load(stream)
-    required = tuple(union() if entries is None else entries)
     recorded = set(manifest.get("whitelist", []))
+    if entries is None:
+        model = "N61" if any("N61" in w for w in recorded) else "N56"
+        required = tuple(union(model=model))
+    else:
+        required = tuple(entries)
     for entry in required:
         if entry not in recorded:
             problems.append(f"快照未包含白名单条目: {entry}")

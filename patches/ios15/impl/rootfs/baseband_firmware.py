@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import shutil
 import zipfile
 
 FILES = (
@@ -31,12 +32,12 @@ def write_json(path, data):
     path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
 
 
-def build_firmware_root(ipsw, output):
+def build_firmware_root(ipsw, output, model="N56"):
     """从 N56 16H88 IPSW 取 n56ap 身份选中的 bbfw，解出 13 个成员放到两个 Mav10 路径。"""
     with zipfile.ZipFile(ipsw) as archive:
         manifest = plistlib.loads(archive.read("BuildManifest.plist"))
         member, = {i["Manifest"]["BasebandFirmware"]["Info"]["Path"]
-                   for i in manifest["BuildIdentities"] if i["Info"]["DeviceClass"].lower() == "n56ap"}
+                   for i in manifest["BuildIdentities"] if i["Info"]["DeviceClass"].lower() == model.lower() + "ap"}
         raw = archive.read(member)
     with zipfile.ZipFile(BytesIO(raw)) as firmware:
         contents = {name: firmware.read(name) for name in FILES}
@@ -49,6 +50,26 @@ def build_firmware_root(ipsw, output):
             if not path.is_file() or path.read_bytes() != data:
                 path.write_bytes(data)
             path.chmod(0o644)
+    return output
+
+
+def build_donor_firmware_root(donor, output):
+    """Use the verified native runtime set, including this device's tickets."""
+    source = Path(donor) / DEVICE_FIRMWARE
+    required = (set(FILES) - {"Info.plist", "Options.plist", "restoresbl1.mbn"}) | set(PERSONALIZED)
+    for name in sorted(required):
+        path = source / name
+        if path.is_symlink() or not path.is_file() or not path.stat().st_size:
+            raise ValueError("native runtime baseband input missing/empty: " + str(path))
+    output = Path(output) / "root"
+    if output.resolve().is_relative_to(Path(donor).resolve()):
+        raise ValueError("baseband output must be outside the donor snapshot")
+    for relative in FIRMWARE_PATHS:
+        dest = output / relative
+        dest.mkdir(parents=True, exist_ok=True)
+        for name in sorted(required):
+            shutil.copyfile(source / name, dest / name)
+            (dest / name).chmod(0o644)
     return output
 
 

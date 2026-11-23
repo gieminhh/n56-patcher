@@ -42,7 +42,14 @@ AVGESTALT_EDITS = (
 )
 
 
-def plan_avgestalt(root):
+def avgestalt_edits(model="N56"):
+    if model not in ("N56", "N61"):
+        raise ValueError("unsupported camera model: " + model)
+    return ((AVGESTALT_EDITS[0][0], AVGESTALT_EDITS[0][1],
+             (model + "-N66m").encode(), AVGESTALT_EDITS[0][3]), *AVGESTALT_EDITS[1:])
+
+
+def plan_avgestalt(root, model="N56"):
     """Give N56 its own AVGestalt device-features entry in the J96 cache."""
     from core.dyld_cache import DyldCache
     from .dyld_cache import CACHE, plan_edits
@@ -51,7 +58,7 @@ def plan_avgestalt(root):
     with DyldCache(root / CACHE) as cache:
         if cache._files[cache.path].uuid.hex() != J96_CACHE_UUID:
             raise ValueError("AVGestalt patch requires the J96 19H422 cache")
-    return plan_edits(root, tuple((a, b, c) for a, b, c, _ in AVGESTALT_EDITS),
+    return plan_edits(root, tuple((a, b, c) for a, b, c, _ in avgestalt_edits(model)),
                       owner="rootfs.camera_config")
 
 
@@ -180,7 +187,7 @@ def compare_schema(before, after):
     }
 
 
-def build(session_raw, setup_raw, output, *, provenance=None):
+def build(session_raw, setup_raw, output, *, provenance=None, model="N56"):
     """验证两份原生配置，生成确定性的能力表、原样 CameraSetup 与可审计报告。"""
     native = _plist(session_raw, FILENAMES[0])
     _plist(setup_raw, FILENAMES[1])
@@ -208,11 +215,11 @@ def build(session_raw, setup_raw, output, *, provenance=None):
         })
     report = {
         "patch": "rootfs.camera_config",
-        "source": SOURCE,
-        "destination": DEST,
-        "platform": "N56 A8 / J96 H6 (no N66 A9/H8 binary transplant)",
+        "source": SOURCE.replace("N56", model),
+        "destination": DEST.replace("N56", model),
+        "platform": f"{model} A8 / J96 H6 (no N66 A9/H8 binary transplant)",
         "binary_changes": [{"image": AVFCAPTURE_IMAGE, "address": hex(a), "before": b.hex(),
-                            "after": c.hex(), "field": f} for a, b, c, f in AVGESTALT_EDITS],
+                            "after": c.hex(), "field": f} for a, b, c, f in avgestalt_edits(model)],
         "conversion_policy": "Only infer hasAutoFocus from native modes 1/2; preserve all other native values and aliases",
         "validation": {"multistream_tables": list(TABLES), "cross_references": True},
         "devices": devices,

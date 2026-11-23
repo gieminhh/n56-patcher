@@ -178,6 +178,9 @@ def patch_native(base_path=None, donor_path=None, out_json=None, out_binary=None
     print(f"Loading native N56AP DeviceTree: {base_path}")
     tree = load_jsonc(base_path)
     root = tree["device-tree"]
+    model = next((p["value"] for p in root if isinstance(p, dict) and p.get("name") == "target-type"), "N56")
+    if model not in ("N56", "N61"):
+        raise ValueError("unsupported native DeviceTree: " + model)
 
     # 1. Patch /chosen with iOS 13 required properties
     #    (list verified against real j96ap/n66ap iOS 13 DTs)
@@ -226,7 +229,7 @@ def patch_native(base_path=None, donor_path=None, out_json=None, out_binary=None
         add_prop(
             touch_node,
             "compatible",
-            "multi-touch,n56\x00multi-touch,j96\x00",
+            f"multi-touch,{model.lower()}\x00multi-touch,j96\x00",
             32,
             4,
         )

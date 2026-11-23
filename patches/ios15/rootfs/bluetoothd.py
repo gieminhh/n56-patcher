@@ -6,7 +6,7 @@ from patches.ios15.impl.rootfs.bluetoothd import build_bluetool, build_bluetooth
 class Bluetoothd(SourceOverlay):
     id = "rootfs.bluetoothd"
     feature = "bluetooth"
-    checkpoint_version = "enum1-no-mws-v1"
+    checkpoint_version = "enum1-native-no-mws-v2"
     note = "19H422 4350C2 id=1 初始化，与 14 相同的 4 处同槽位改写；WCM 的 MWS 配置不下发给 BCM4345"
     items = (
         SourceItem(source="patch:bluetoothd", dest="usr/sbin/bluetoothd", op="copy",

@@ -2,6 +2,11 @@
 
 # n56-patcher
 
+> **N61 fork:** Based on [CelestialSayuki/n56-patcher](https://github.com/CelestialSayuki/n56-patcher).
+> This fork adds iPhone 6 (N61AP / iPhone7,2) adaptations for iOS 15.8.8.
+> Installation and boot were confirmed on one N61 device on 2026-11-23.
+> See [N61 setup, validation and resume notes](docs/n61.md); upstream author credits remain below.
+
 **Build and install tool for running other iOS versions on iPhone 6 Plus (N56AP / iPhone7,1)**
 
 [简体中文](README.md) · English · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md)
@@ -136,6 +141,29 @@ sudo python3 n56patcher.py all --target n56-ios15
 | Touch screen, display, Wi-Fi, Bluetooth, baseband, audio, vibration, charging, sensors, camera, Health, activation and iCloud, iCloud backup, NFC/Apple Pay, Apple Watch pairing, jailbreak (rootless/rootful, Sileo, SSH) |
 
 The Touch ID transport bridge is connected; it cannot be verified on this unit because its sensor was replaced. Status and technical details are in [docs/conclusions/15.md](docs/conclusions/15.md) (Chinese).
+
+### Local N61 native-resource adaptation
+
+The local iOS 15 changes select N61 resources when the verified device snapshot
+contains `N61.mtprops`. The existing `n56-ios15` target and slot paths remain the
+entry points. N61 uses its own `tempranillo` Wi-Fi hashstore records, touch
+personality, camera configuration, thermal model, Bluetooth product identity,
+model resources and personalized Mav10 runtime firmware. Fresh native input
+extraction uses the N61 16H88 IPSW; existing matching extracted inputs are reused.
+Host checks and an N61 installation/boot have passed. A complete hardware test
+matrix has not been recorded; these changes do not establish upstream N61 support.
+
+If the base-system transfer finished and installation stopped during overlays:
+
+```sh
+sudo python3 n56patcher.py slots resume 15
+```
+
+This checks the selected rootfs marker and build, builds the boot package, resumes
+overlays with their checkpoints, then records the installation. It does not call
+volume wiping or rootfs streaming. First keybag creation is allowed only for a
+verified, genuinely empty encrypted Data15 and is bound to its APFS UUID; existing
+Data and recovery state retain the normal keybag guards.
 
 ## Features
 

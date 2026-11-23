@@ -2,6 +2,7 @@ import os
 import tempfile
 import unittest
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 from core.flow import Flow
 
@@ -24,6 +25,7 @@ class FakeRamdisk:
 def bare_flow(rd, ctx, sel=None):
     flow = Flow.__new__(Flow)
     flow.ctx, flow.rd, flow.sel = ctx, rd, sel or {}
+    flow.init = Mock()  # These tests exercise ramdisk reuse/boot, not donor setup.
     return flow
 
 

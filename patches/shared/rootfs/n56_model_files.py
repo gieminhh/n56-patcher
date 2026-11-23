@@ -1,3 +1,6 @@
+from copy import copy
+
+from core.native_device import native_device
 from core.overlay import SourceItem, SourceOverlay
 
 
@@ -14,7 +17,7 @@ class RootfsN56ModelFiles(SourceOverlay):
     id = "rootfs.n56_model_files"
     feature = "core"
     scope = "device"
-    checkpoint_version = 2
+    checkpoint_version = "native-model-v3"
     note = "从本机 SystemA 补 N56 机型文件"
     items = tuple(SourceItem(source="device_s1:" + path, dest=path,
                              op="copy-if-missing", depends_on_signing=False)
@@ -28,8 +31,23 @@ class RootfsN56ModelFiles(SourceOverlay):
                    mode=0o644, uid=0, gid=0, check={"plist": True}),
     )
 
+    def items_for(self, ctx):
+        model = native_device(ctx).model
+        items = []
+        for original in self.items:
+            item = copy(original)
+            item.source = item.source.replace("N56", model)
+            item.dest = item.dest.replace("N56", model)
+            items.append(item)
+        return tuple(items)
+
     def apply(self, ctx, art=None):
         super().apply(ctx, art)
+        device = native_device(ctx)
+        if device.model == "N61":
+            # Retain the native N61 2x certification images and their original variants.
+            ctx.patch_reports[self.id] = {"model": device.model, "regulatory_images": "native"}
+            return
         from patches.shared.impl.rootfs.regulatory_model import reader
 
         session = ctx.ssh

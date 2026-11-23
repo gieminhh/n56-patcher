@@ -12,6 +12,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
+from core.native_device import native_device
 
 from .dyld_cache import plan_edits
 
@@ -42,9 +43,23 @@ CACHE_EDITS = (
 )
 
 
-def patch_locationd(source):
+def locationd_edits(model='N56'):
+    if model not in ('N56', 'N61'):
+        raise ValueError('unsupported motion model: ' + model)
+    return tuple((offset + (4 if model == 'N61' and i < 2 else 0), before, after)
+                 for i, (offset, before, after) in enumerate(LOCATIOND_EDITS))
+
+
+def cache_edits(model='N56'):
+    if model not in ('N56', 'N61'):
+        raise ValueError('unsupported motion model: ' + model)
+    return tuple((address + (4 if model == 'N61' and i in (0, 1, 4, 5) else 0), before, after)
+                 for i, (address, before, after) in enumerate(CACHE_EDITS))
+
+
+def patch_locationd(source, model='N56'):
     data = bytearray(source)
-    for offset, before, after in LOCATIOND_EDITS:
+    for offset, before, after in locationd_edits(model):
         if data[offset:offset + len(before)] != before:
             raise ValueError(f'locationd before 不匹配: 0x{offset:x}')
         data[offset:offset + len(after)] = after
@@ -65,13 +80,14 @@ def prepare(ctx):
     directory = Path(ctx.wk('motion-platform')).resolve()
     directory.mkdir(parents=True, exist_ok=True)
     root = Path(ctx.mount_rootfs('j96'))
+    model = native_device(ctx).model
     output = directory / 'locationd.n56'
-    output.write_bytes(patch_locationd((root / LOCATIOND).read_bytes()))
+    output.write_bytes(patch_locationd((root / LOCATIOND).read_bytes(), model))
     subprocess.run(['codesign', '-s', '-', '-f', PRESERVE_METADATA, str(output)],
                    check=True, capture_output=True)
     os.chmod(output, 0o755)
-    backend = plan_edits(root, CACHE_EDITS, owner=PATCH_ID)
-    report = dict(patch_id=PATCH_ID, output=dict(path=str(output)), backend_plan=backend,
+    backend = plan_edits(root, cache_edits(model), owner=PATCH_ID)
+    report = dict(patch_id=PATCH_ID, model=model, output=dict(path=str(output)), backend_plan=backend,
                   trustcache_entries=backend['trustcache_entries'])
     report['manifest'] = write_report(directory, report)
     ctx.patch_reports[PATCH_ID] = report

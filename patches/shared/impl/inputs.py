@@ -8,6 +8,7 @@ import tempfile
 import zipfile
 
 from core.context import REPO as REPO_PATH
+from core.native_device import DEVICES
 REPO = Path(REPO_PATH)
 
 IMG4 = REPO / "tools/img4lib/img4"
@@ -54,7 +55,7 @@ def mounted(image, directory):
         subprocess.run(["hdiutil", "detach", str(directory)], check=True, capture_output=True)
 
 
-def prepare(source, archives, build):
+def prepare(source, archives, build, model="N56"):
     source.mkdir(parents=True, exist_ok=True)
     for name, board, version in (("j96", "j96ap", build), ("n66", "n66ap", build)):
         print(f"提取 {board} {version}", flush=True)
@@ -62,7 +63,7 @@ def prepare(source, archives, build):
             entries = extract(archive, board, version, source / name)
     print("提取 N56 原生硬件输入", flush=True)
     with zipfile.ZipFile(archives["n56"]) as archive:
-        entries = extract(archive, "n56ap", "16H88", source / "n56")
+        entries = extract(archive, model.lower() + "ap", "16H88", source / "n56")
         with tempfile.TemporaryDirectory(prefix="n56-fw-", dir=source.parent) as temporary:
             temporary = Path(temporary)
             image = temporary / "n56.dmg"
@@ -71,7 +72,7 @@ def prepare(source, archives, build):
                 firmware = root / "usr/share/firmware/wifi/C-4345__s-B1"
                 output = source / "n56/firmware/C-4345__s-B1"
                 output.mkdir(parents=True, exist_ok=True)
-                for name in ("barbera.trx", "barbera.clmb", "barbera.txcb"):
+                for name in (DEVICES[model].firmware + ext for ext in (".trx", ".clmb", ".txcb")):
                     shutil.copy2(firmware / name, output / name)
     return source
 
@@ -81,5 +82,18 @@ OUTPUTS = ("j96/KernelCache", "j96/kernel.raw", "j96/StaticTrustCache",
            "n56/DeviceTree.jsonc", "n56/firmware/C-4345__s-B1/barbera.trx")
 
 
-def generate(n56, n66, j96, out, *, build):
-    return prepare(Path(out), {"n56": Path(n56), "n66": Path(n66), "j96": Path(j96)}, build)
+def generate(n56, n66, j96, out, *, build, model="N56"):
+    return prepare(Path(out), {"n56": Path(n56), "n66": Path(n66), "j96": Path(j96)}, build, model)
+
+
+def inputs_ready(root, model="N56"):
+    from patches.shared.impl.dt.dt_patch import load_jsonc
+    root = Path(root)
+    required = (*OUTPUTS[:-1], *(f"n56/firmware/C-4345__s-B1/{DEVICES[model].firmware}{ext}"
+                                for ext in (".trx", ".clmb", ".txcb")))
+    if not all((root / rel).is_file() for rel in required):
+        return False
+    tree = load_jsonc(root / "n56/DeviceTree.jsonc")
+    actual = next((p['value'] for p in tree['device-tree']
+                   if isinstance(p, dict) and p.get('name') == 'target-type'), None)
+    return actual == model

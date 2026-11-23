@@ -175,8 +175,9 @@ class Ramdisk:
         model = self.sh("/usr/sbin/sysctl -n hw.model").decode().strip().lower()
         release = self.sh("/usr/sbin/sysctl -n kern.osrelease").decode().strip()
         mounts = self.sh("/sbin/mount").decode()
-        if model != self.ctx.t["device"]["model"]:
-            log.die(f"安装目标需要 N56，当前为 {model}")
+        if model not in (self.ctx.t["device"]["model"], "n61ap"):
+            log.die(f"安装目标需要 N56/N61，当前为 {model}")
+        self.ctx.native_model = model
         if not any(("/dev/md" in line and " on / " in line)
                    or line.startswith("root_device on / (hfs,")
                    for line in mounts.splitlines()):
@@ -429,8 +430,9 @@ class Ramdisk:
             finally:
                 try:
                     proc.stdin.close()
-                except BrokenPipeError:
+                except (BrokenPipeError, OSError):
                     pass
+            proc.stdin = None
             out, err = proc.communicate()
             if proc.returncode == 0:
                 if feed_error:
@@ -519,7 +521,11 @@ class Ramdisk:
                 proc = subprocess.Popen(self._ssh_base + [remote], stdin=subprocess.PIPE,
                                         stderr=subprocess.PIPE)
                 problem = feed(proc.stdin)
-                proc.stdin.close()
+                try:
+                    proc.stdin.close()
+                except (BrokenPipeError, OSError):
+                    pass
+                proc.stdin = None
                 _, err = proc.communicate()
                 if proc.returncode or problem:
                     log.die(f"流式写入失败: {root} → {dest}\n" + (problem or err.decode(errors="replace")))

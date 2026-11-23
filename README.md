@@ -2,6 +2,12 @@
 
 # n56-patcher
 
+> **N61 fork:** This is a fork of [CelestialSayuki/n56-patcher](https://github.com/CelestialSayuki/n56-patcher),
+> adding iPhone 6 (N61AP / iPhone7,2) adaptations for iOS 15.8.8.
+> Installation and boot were confirmed on one N61 device on 2026-11-23;
+> a complete hardware test matrix has not been recorded. See [N61 setup and resume notes](docs/n61.md).
+> The original project's N56 documentation and author credits are retained below.
+
 **iPhone 6 Plus（N56AP / iPhone7,1）的其他系统构建与安装工具**
 
 简体中文 · [English](README.en.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md)

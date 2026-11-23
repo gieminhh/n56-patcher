@@ -27,12 +27,18 @@ def build_helper(ctx):
     Path(output).parent.mkdir(parents=True, exist_ok=True)
     probe = subprocess.run(["xcrun", "--sdk", "iphoneos", "--show-sdk-path"],
                            capture_output=True, text=True)
-    if probe.returncode:
-        # This helper only imports POSIX libSystem. Use the bounded iOS12
-        # toolchain fallback; do not turn it into an arbitrary iOS SDK.
-        run([sys.executable, str(source.with_name("build_helper.py")), output])
-        return output
-    sdk = probe.stdout.strip()
+    sdk = None
+    if probe.returncode == 0:
+        sdk = probe.stdout.strip()
+    else:
+        local_sdk = Path(REPO) / "tools/sdks/iPhoneOS15.6.sdk"
+        if local_sdk.exists():
+            sdk = str(local_sdk)
+    if not sdk:
+        if source.with_name("build_helper.py").exists():
+            run([sys.executable, str(source.with_name("build_helper.py")), output])
+            return output
+        raise RuntimeError("No iOS SDK found to compile create_systembag")
     run(["clang", "-arch", "arm64", "-isysroot", sdk, "-miphoneos-version-min=12.0", "-O2",
          str(source), "-o", output])
     run(["codesign", "-s", "-", "-f", "--entitlements",

@@ -8,6 +8,8 @@
 *.ipsw
 *.dmg
 *.img4
+*.im4p
+*.im4m
 *.raw
 IM4M*
 *keybag*
@@ -26,6 +28,8 @@ __pycache__/
 .DS_Store
 
 /tools/bin/
+# Local Apple SDKs are user-provided build inputs, not fork source.
+/tools/sdks/
 /tools/checkra1n-kpf/checkra1n/kpf-test/kpf-test.macos
 # kpf 宿主侧反汇编产物（make host-blobs 生成，make clean 删除）
 /tools/checkra1n-kpf/checkra1n/kpf-test/host-blobs/

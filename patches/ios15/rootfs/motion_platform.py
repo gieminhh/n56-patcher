@@ -9,6 +9,7 @@ from patches.ios15.impl.rootfs.dyld_cache import apply_edits
 class MotionPlatform(SourceOverlay):
     id = impl.PATCH_ID
     feature = 'motion'
+    checkpoint_version = 'native-motion-v2'
     donors = ('j96',)
     note = '19H422 N56 native 0x34 / Oscar-M8：locationd、CoreLocation、CoreMotion 一致分组'
     items = (

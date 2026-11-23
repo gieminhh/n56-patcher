@@ -67,10 +67,10 @@ def semantic(record):
     return record['digest'], record['flags'], record['length'], record['aux']
 
 
-def native_files(firmware=None):
+def native_files(firmware=None, approved=OLD_HASHES):
     firmware = DERIVED / 'wifi' if firmware is None else Path(firmware)
     result = {}
-    for name in OLD_HASHES:
+    for name in approved:
         data = (firmware / name).read_bytes()
         result[name] = dict(bytes=len(data), sha256=sha(data))
     return result
@@ -89,24 +89,22 @@ def adapt(k, files=None, storage=STORAGE, *, header=HEADER, expected_count=645,
                                        new_slide_slots=[], already_approved=True,
                                        unchanged_filename_mappings=len(before))
     host = next(s for s in k.segs if s['name'] == '__PLK_DATA_CONST')
-    check_region(storage, 0x98, host['vm'], k.read(host['vm'], host['fs']), k.claims())
+    storage_size = 0xc0 if resize_trx else 0x98
+    check_region(storage, storage_size, host['vm'], k.read(host['vm'], host['fs']), k.claims())
     native_slots = set(k.slide_slots())
     data = bytearray(k.data)
     edits = []
+    new_slide_slots = []
     for i, name in enumerate(names):
         old = before[path_key(name)]
         item = files[name]
         if old['digest'].hex() != approved[name]:
             raise ValueError('unexpected original approved digest: ' + name)
-        if old['length'] != item['bytes'] and not (i == 0 and resize_trx):
-            raise ValueError('native firmware length differs from the approved B1 image')
         blob = storage + i * 36
         struct.pack_into('<I', data, k.offset(blob), 32)
         data[k.offset(blob + 4):k.offset(blob + 4) + 32] = bytes.fromhex(item['sha256'])
-        if i == 0:
-            # The .trx value is shared by three keys: clone all 24 bytes and
-            # redirect this filename's link rather than changing the shared object.
-            clone = storage + 0x80
+        if i == 0 or (old['length'] != item['bytes'] and resize_trx):
+            clone = storage + 0x70 + (0 if i == 0 else 0x18)
             data[k.offset(clone):k.offset(clone) + 24] = k.read(old['value'], 24)
             struct.pack_into('<Q', data, k.offset(clone), blob)
             struct.pack_into('<I', data, k.offset(clone + 12), item['bytes'])
@@ -114,7 +112,10 @@ def adapt(k, files=None, storage=STORAGE, *, header=HEADER, expected_count=645,
             new = clone
             if old['value'] not in native_slots or old['value'] + 16 not in native_slots:
                 raise ValueError('original cloned pointers lack native slide ownership')
+            new_slide_slots.extend([clone, clone + 16])
         else:
+            if old['length'] != item['bytes']:
+                raise ValueError('native firmware length differs from the approved B1 image')
             if sum(r['value'] == old['value'] for r in before.values()) != 1:
                 raise ValueError('unexpected shared value for regulatory/TxCap data')
             link, new = old['value'], blob
@@ -131,8 +132,8 @@ def adapt(k, files=None, storage=STORAGE, *, header=HEADER, expected_count=645,
     for name, item in files.items():
         if after[path_key(name)]['digest'].hex() != item['sha256']:
             raise ValueError('native filename mapping mismatch')
-    return data, dict(storage=storage, storage_size=0x98, edits=edits,
-                      new_slide_slots=[storage + 0x80, storage + 0x90],
+    return data, dict(storage=storage, storage_size=storage_size, edits=edits,
+                      new_slide_slots=new_slide_slots if new_slide_slots else [storage + 0x80, storage + 0x90],
                       unchanged_filename_mappings=len(before) - len(changed))
 
 

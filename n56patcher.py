@@ -131,12 +131,22 @@ def make_flow(args):
         slot, donor = slot_binding(args.slot, args.stage)
         if workdir is None:
             workdir = os.path.join(REPO, "build", "slots", args.slot)
+    else:
+        from core import slots
+        from core.slots_cli import STATE_PATH, donor_ready, _donor_dir
+        try:
+            state = slots.load_state(STATE_PATH)
+            if donor_ready(state):
+                donor = _donor_dir(state)
+        except Exception:
+            pass
     ctx = Context(args.target, workdir=workdir, dry_run=args.dry_run)
     if slot:
         ctx.slot = slot
-        ctx.donor_dir = donor
         ctx.keep_data = bool(getattr(args, "keep_data", False))
         ctx.t["volumes"]["min_slice"] = 1
+    if donor:
+        ctx.donor_dir = donor
     if slot:
         from core import slots
         from core.slots_cli import STATE_PATH

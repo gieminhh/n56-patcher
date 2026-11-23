@@ -5,7 +5,9 @@ MediaToolbox 的旧读取位置或默认预设兜底。N56 16H88 的命名 Multi
 表原样保留并验证引用，仅给后置补 hasAutoFocus；前置与 CameraSetup 不变。
 """
 from pathlib import Path
+from copy import copy
 
+from core.native_device import native_device
 from core.overlay import SourceItem, SourceOverlay
 from patches.ios15.impl.rootfs.camera_config import (
     DEST, FILENAMES, SOURCE, build, plan_avgestalt,
@@ -16,7 +18,7 @@ from patches.ios15.impl.rootfs.dyld_cache import apply_edits
 class CameraConfig(SourceOverlay):
     id = "rootfs.camera_config"
     feature = "camera"
-    checkpoint_version = "avgestalt-n56-v1"
+    checkpoint_version = "avgestalt-native-v2"
     after = ("rootfs.n56_model_files",)
     note = "19H422 CMCapture/N56 原生 MultiStream 能力表（保留 A8/H6，不搬 A9/H8）"
     items = (
@@ -29,32 +31,44 @@ class CameraConfig(SourceOverlay):
                    check={"plist": True}),
     )
 
+    def items_for(self, ctx):
+        model = native_device(ctx).model
+        items = []
+        for original in self.items:
+            item = copy(original)
+            item.source = item.source.replace("N56", model)
+            item.dest = item.dest.replace("N56", model)
+            items.append(item)
+        return tuple(items)
+
     def derive(self, ctx, name, item):
         if name != "session":
             raise ValueError(f"未知相机派生项: {name}")
+        model = native_device(ctx).model
+        source = SOURCE.replace("N56", model)
         if ctx.donor_dir:
             ctx.verify_device_system(None)
             root = Path(ctx.donor_dir)
-            raw = {n: (root / SOURCE / n).read_bytes() for n in FILENAMES}
-            provenance = {"donor_dir": str(root), "model": "N56", "build": "16H88",
-                          "source_paths": [SOURCE + "/" + n for n in FILENAMES]}
+            raw = {n: (root / source / n).read_bytes() for n in FILENAMES}
+            provenance = {"donor_dir": str(root), "model": model, "build": "16H88",
+                          "source_paths": [source + "/" + n for n in FILENAMES]}
         else:
             session = ctx.ssh
             ctx.verify_device_system(session)
             session.mount(ctx.t["mounts"]["system12"], "/mnt1", ro=True)
-            raw = {n: session.sh(f'cat "/mnt1/{SOURCE}/{n}"') for n in FILENAMES}
-            provenance = {"source": "verified N56 SystemA", "model": "N56", "build": "16H88",
-                          "source_paths": [SOURCE + "/" + n for n in FILENAMES]}
+            raw = {n: session.sh(f'cat "/mnt1/{source}/{n}"') for n in FILENAMES}
+            provenance = {"source": f"verified {model} SystemA", "model": model, "build": "16H88",
+                          "source_paths": [source + "/" + n for n in FILENAMES]}
         output = Path(ctx.wk("camera-config"))
-        report = build(raw[FILENAMES[0]], raw[FILENAMES[1]], output, provenance=provenance)
+        report = build(raw[FILENAMES[0]], raw[FILENAMES[1]], output, provenance=provenance, model=model)
         ctx.patch_reports[self.id] = report
         return str(output / FILENAMES[0])
 
     def signing_inputs(self, ctx):
-        return {"cache_plans": (plan_avgestalt(ctx.mount_rootfs("j96")),)}
+        return {"cache_plans": (plan_avgestalt(ctx.mount_rootfs("j96"), native_device(ctx).model),)}
 
     def apply(self, ctx, art=None):
-        plan = plan_avgestalt(ctx.mount_rootfs("j96"))
+        plan = plan_avgestalt(ctx.mount_rootfs("j96"), native_device(ctx).model)
         super().apply(ctx, art)
         result = apply_edits(ctx.ssh, self.mount, plan)
         ctx.ssh.sync()

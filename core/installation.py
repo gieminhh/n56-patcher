@@ -37,6 +37,9 @@ def restore_layout(ctx):
         layout = json.loads(path.read_text())
         if layout["target"] != ctx.t["name"] or layout["build"] != ctx.t["build"]:
             log.die("工作目录属于另一系统目标，请更换 --workdir")
+        slot = getattr(ctx, "slot", None)
+        if slot and (layout["system"], layout["data"]) != (slot["system"], slot["data"]):
+            log.die("保存的布局与当前槽位不同，拒绝复用卷身份与创建授权")
         bind_volumes(ctx, layout["system"], layout["data"])
         if ctx.t.get("version") == "ios15":
             token = layout.get("new_data_authorization")

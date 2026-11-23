@@ -6,8 +6,10 @@ from patches.shared.impl.kc.sn2400.port import compact_plist
 from patches.shared.impl.kc.vibration.transplant import intern_strings
 
 
-def touch(native, target):
-    source = next(iter(native.kexts["com.apple.driver.AppleMultitouchSPIN56"]["IOKitPersonalities"].values()))
+def touch(native, target, model="N56"):
+    if model not in ("N56", "N61"):
+        raise ValueError("unsupported touch model: " + model)
+    source = next(iter(native.kexts["com.apple.driver.AppleMultitouchSPI" + model]["IOKitPersonalities"].values()))
     info = deepcopy(target.info)
     entry = next(e for e in info["_PrelinkInfoDictionary"]
                  if e["CFBundleIdentifier"] == "com.apple.driver.AppleMultitouchSPIJ96")

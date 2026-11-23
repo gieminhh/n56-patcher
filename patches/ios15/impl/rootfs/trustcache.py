@@ -99,7 +99,7 @@ def prepare(ctx):
                 detached_owners[pair] = patch.id
             cache_plans.extend(inputs.get('cache_plans', ()))
         elif isinstance(patch, SourceOverlay):
-            for item in patch.items:
+            for item in patch.items_for(ctx):
                 if not item.depends_on_signing or item.op == 'delete':
                     continue
                 path = str(_source(ctx, patch, item))

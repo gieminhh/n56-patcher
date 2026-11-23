@@ -15,6 +15,7 @@
   adopt <版本>               认领已装好的系统：检查 Sys 版本、给 Data 写版本标记（需要 ramdisk）
   identify                  在设备上识别分区（统一识别：System 看版本、Data 看标记），核对已装记录（需要 ramdisk）
   install <版本> [--keep-data]  按槽位安装（卷、清空、rootfs、补丁）、构建启动包并记录
+  resume <版本>             复用完整 rootfs，续跑补丁、构建启动包并记录（不清空卷）
   delete <sN> [--pair]       删除分区并释放号码（需要 ramdisk；已装版本须 --pair）
   record <版本>              安装并构建后，记录已装状态与启动包输入哈希
   boot-decision <版本>       输出启动包判定：none / ok / rebuild / confirm
@@ -28,6 +29,7 @@ import shutil
 import sys
 
 from . import device_identity, donors, slots
+from .native_device import native_device
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATE_PATH = os.environ.get("N56_SLOTS_STATE") or os.path.join(REPO, "state", "volumes.json")
@@ -312,9 +314,10 @@ def cmd_record(args):
 
 
 def _boot_parts_from_manifest(boot):
-    """启动组件只由 target、分区绑定与补丁选择决定。donor 只影响 rootfs，不进入启动包哈希。"""
+    """Include native model: N56 and N61 use different KC and signed userland inputs."""
     return {"bootargs": boot.get("bootargs"), "mounts": boot.get("mounts"),
-            "selection": boot.get("selection"), "data_protection": boot.get("data_protection")}
+            "selection": boot.get("selection"), "data_protection": boot.get("data_protection"),
+            "native_model": boot.get("native_model", "N56")}
 
 
 def current_boot_sha(version):
@@ -325,6 +328,7 @@ def current_boot_sha(version):
     try:
         return slots.boot_inputs_sha(_boot_parts_from_manifest({
             "bootargs": ctx.t["bootargs"],
+            "native_model": native_device(ctx).model,
             "mounts": ctx.t["mounts"],
             "selection": {layer: [p.id for p in patches] for layer, patches in selection.items()},
             "data_protection": ctx.t.get("data_protection", "encrypted"),
@@ -406,6 +410,30 @@ def cmd_install(args):
     return cmd_record(argparse.Namespace(version=args.version))
 
 
+def cmd_resume(args):
+    """Reuse the completed slot base without invoking volumes/rootfs or clearing checkpoints."""
+    from core.log import Die
+    import n56patcher
+    state = _state()
+    plan = slots.plan_install(state, args.version, donor_ready(state))
+    if plan["status"] == "installed":
+        raise slots.SlotError(plan["note"])
+    if plan["status"] == "blocked":
+        raise slots.SlotError(plan["blocked"])
+    stage = n56patcher.build_parser().parse_args(
+        ["patch-rootfs", "--target", target_of(args.version), "--slot", args.version])
+    _, _, flow = n56patcher.make_flow(stage)
+    try:
+        try:
+            flow.resume_install()
+        finally:
+            flow.close()
+    except Die as exc:
+        print(f"[!] 续装未完成：{exc}", file=sys.stderr)
+        return 1
+    return cmd_record(argparse.Namespace(version=args.version))
+
+
 # ---------------------------------------------------------------- 命令行
 
 def build_parser():
@@ -448,6 +476,9 @@ def build_parser():
     i.add_argument("--keep-data", action="store_true",
                    help="实验性：不清空 Data 卷（保留原数据，未在设备上验证）")
     i.set_defaults(fn=cmd_install)
+    rs = sub.add_parser("resume", help="复用完整 rootfs 续装，不清空卷")
+    rs.add_argument("version")
+    rs.set_defaults(fn=cmd_resume)
     r = sub.add_parser("record")
     r.add_argument("version")
     r.set_defaults(fn=cmd_record)

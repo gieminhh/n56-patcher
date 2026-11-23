@@ -130,8 +130,8 @@ class WifiTests(unittest.TestCase):
                          {w.shared.path_key(n) for n in w.APPROVED})
         self.assertEqual(w.shared.ByteView(self.k, data).read(old_value, 24), self.k.read(old_value, 24))
         self.assertEqual(report["storage"], 0x1900)
-        self.assertEqual(report["new_slide_slots"], [0x1980, 0x1990])
-        self.assertEqual(candidate_slots(data), self.k.slots + [0x1980, 0x1990])
+        self.assertEqual(report["new_slide_slots"], [0x1970, 0x1980])
+        self.assertEqual(candidate_slots(data), self.k.slots + [0x1970, 0x1980])
         self.assertEqual(report["edits"][0]["old_length"], 513155)
         self.assertEqual(report["edits"][0]["new_length"], 514173)
         for n, f in self.k.files.items():
@@ -154,14 +154,19 @@ class WifiTests(unittest.TestCase):
             w.adapt(self.k, self.k.files, self.k.native)
         self.assertEqual(self.k.data, original)
 
-    def test_missing_pointer_ownership_and_non_trx_resize_rejected(self):
+    def test_missing_pointer_ownership_rejected_and_resized_clmb_cloned(self):
         self.k.slots.remove(0x1248)
         with self.assertRaisesRegex(ValueError, "slide ownership"):
             w.adapt(self.k, self.k.files, self.k.native)
         self.k.slots.append(0x1248)
         self.k.files["C-4345__s-B1/barbera.clmb"]["bytes"] += 1
-        with self.assertRaisesRegex(ValueError, "length"):
-            w.adapt(self.k, self.k.files, self.k.native)
+        before = w.shared.read_index(self.k, self.k.profile.header, 5)
+        data, report = w.adapt(self.k, self.k.files, self.k.native)
+        after = w.shared.read_index(w.shared.ByteView(self.k, data), self.k.profile.header, 5)
+        key = w.shared.path_key("C-4345__s-B1/barbera.clmb")
+        self.assertNotEqual(before[key]["value"], after[key]["value"])
+        self.assertEqual(after[key]["length"], self.k.files["C-4345__s-B1/barbera.clmb"]["bytes"])
+        self.assertIn(after[key]["value"], report["new_slide_slots"])
 
     def test_native_digest_and_slide_metadata_capacity_checked(self):
         with self.assertRaisesRegex(ValueError, "N56 native kernel"):
@@ -187,7 +192,9 @@ class WifiTests(unittest.TestCase):
         with patch("patches.ios15.kc.wifi.adapt_wifi", return_value={"ok": True}) as adapter:
             self.assertEqual(Wifi().apply(ctx, "composed-current.raw"), "wifi-output/kc.wifi.raw")
         adapter.assert_called_once_with("composed-current.raw", Path("inputs15/n56/firmware"),
-                                        Path("wifi-output/kc.wifi.raw"))
+                                        Path("wifi-output/kc.wifi.raw"),
+                                        native_kernel=Path("inputs15/n56/kernel.raw"),
+                                        reference_kernel=Path("inputs15/j96/kernel.raw"), model="N56")
         self.assertEqual((Wifi.id, Wifi.feature, Wifi.scope), ("kc.wifi", "wifi", "version"))
         self.assertEqual(ctx.patch_reports[Wifi.id], {"ok": True})
 

@@ -9,6 +9,7 @@ import struct
 import sys
 
 from .chained import align
+from core.native_device import DEVICES
 
 N56_CLASS = 'tm2d9881321f8810c8d30c62649d0353ea'
 METHODS = ('gasGaugeBatteryTemperature', 'updateAllThermalLoad:', 'suppressStandardBehaviors')
@@ -69,18 +70,20 @@ def gas_input(image, cls):
     return None
 
 
-def discover(native, target):
+def discover(native, target, model="N56"):
     """Derive all addresses from this pair of images; no iOS14 address profile."""
     nc, tc = native.classes(), target.classes()
-    cls = nc[N56_CLASS]
+    device = DEVICES[model]
+    cls = nc[device.thermal_class]
     methods = native.methods(cls)
-    product_compare = bytes.fromhex('89f584528900a0721f01096b')
+    product_compare = device.thermal_compare
     product_site = unique_code(native, product_compare, 'native N56 product ID')
     branch = list(disassembler().disasm(native.data[native.offset(product_site + 12):native.offset(product_site + 12) + 4], product_site + 12))[0]
-    if branch.mnemonic != 'b.eq':
+    if branch.mnemonic != device.thermal_branch:
         raise ValueError('native N56 product comparison differs')
-    selection = list(disassembler().disasm(native.data[native.offset(branch.operands[0].imm):native.offset(branch.operands[0].imm) + 4], branch.operands[0].imm))[0]
-    if selection.mnemonic != 'adr' or selection.op_str.split(',')[0] != 'x9' or selection.operands[1].imm != native.class_reference(N56_CLASS):
+    selected = branch.operands[0].imm if branch.mnemonic == 'b.eq' else branch.address + 4
+    selection = list(disassembler().disasm(native.data[native.offset(selected):native.offset(selected) + 4], selected))[0]
+    if selection.mnemonic != 'adr' or selection.op_str.split(',')[0] != 'x9' or selection.operands[1].imm != native.class_reference(device.thermal_class):
         raise ValueError('native product ID does not select N56 class')
     if set(methods) != set(METHODS):
         raise ValueError('unexpected native N56 override set')
@@ -119,7 +122,8 @@ def discover(native, target):
     return dict(methods=methods, native_input=source_input, target_input=target_input,
                 factory=factory, factory_create=create, writer=writer,
                 native_writer=native_writer, sleep=sleep, product_compare=product_compare,
-                native_product_site=product_site, product_id=0x427ac)
+                native_product_site=product_site, product_id=device.thermal_product,
+                model=model, class_name=device.thermal_class)
 
 
 class NativeImporter:
@@ -144,12 +148,14 @@ class NativeImporter:
                 raise ValueError('unexpected N56 page reference')
             address = ins.operands[1].imm + use.operands[1].mem.disp
             self.globals[address] = None
-        if len(self.globals) != 3 or max(self.globals) - min(self.globals) != 8:
-            raise ValueError('unexpected N56 filter state layout')
-        state = metadata.reserve(12, 4)
-        raw = native.data[native.offset(min(self.globals)):native.offset(min(self.globals)) + 12]
-        if bytes(raw) != struct.pack('<3I', 0xbf800000, 0xffffffff, 0xffffffff):
-            raise ValueError('unexpected N56 filter-state initialization')
+        count = 2 if profile['model'] == 'N61' else 3
+        size = count * 4
+        if len(self.globals) != count or max(self.globals) - min(self.globals) != size - 4:
+            raise ValueError('unexpected native filter state layout')
+        state = metadata.reserve(size, 4)
+        raw = native.data[native.offset(min(self.globals)):native.offset(min(self.globals)) + size]
+        if bytes(raw) != struct.pack('<' + 'I' * count, 0xbf800000, *([0xffffffff] * (count - 1))):
+            raise ValueError('unexpected native filter-state initialization')
         metadata.write(state, raw)
         for j, address in enumerate(sorted(self.globals)):
             self.globals[address] = state + j * 4

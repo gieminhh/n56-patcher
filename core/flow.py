@@ -4,6 +4,7 @@ import subprocess
 import sys
 import json
 import hashlib
+import plistlib
 from pathlib import Path
 
 from . import log
@@ -15,6 +16,7 @@ from .trustcache import TrustCache
 from .installation import IndependentInstallation, bind_volumes, restore_layout
 from .volume_inventory import inventory, print_inventory, verify_legacy_targets
 from .jailbreak_mode import ios_major, selected_mode, manifest_mode, require_backend
+from .native_device import native_device
 
 
 class Flow:
@@ -258,6 +260,52 @@ class Flow:
         self.rootfs()
         self.patch_rootfs()
 
+    def resume_install(self):
+        """Continue overlays only after verifying the completed base on the selected slot."""
+        if not self.ctx.installation or not self.ctx.slot:
+            log.die("续装需要独立系统槽位")
+        restore_layout(self.ctx)
+        self._need_ramdisk()
+        if not self.ctx.dry_run:
+            try:
+                self.ctx.installation.prepare()
+                self.ctx.installation.mount_system()
+                version = self.ctx.t["version"]
+                ready = self.ctx.ssh.sh(
+                    f'test -f /mnt6/.n56-{version}-rootfs || test -f /mnt6/.n56-{version}-base; '
+                    'if [ $? -eq 0 ]; then echo yes; fi').strip()
+                if ready != b"yes":
+                    log.die("目标槽位没有完整 rootfs 标记，拒绝续装；需要先完成系统镜像写入")
+                actual = plistlib.loads(self.ctx.ssh.sh(
+                    'cat /mnt6/System/Library/CoreServices/SystemVersion.plist'))
+                if actual.get("ProductBuildVersion") != self.ctx.t["build"]:
+                    log.die("目标槽位 rootfs build 不匹配，拒绝续装")
+                if self.ctx.t.get("version") == "ios15" and self.ctx.t.get("data_protection") == "encrypted":
+                    # An explicit resume may finish a genuinely empty Data15 left by
+                    # the interrupted install. Never authorize creation on existing data.
+                    self.ctx.installation.mount_data()
+                    empty = self.ctx.ssh.sh(
+                        'test -r /mnt7 && test -x /mnt7 || exit 1; '
+                        'for entry in /mnt7/* /mnt7/.[!.]* /mnt7/..?*; do '
+                        'if [ -e "$entry" ] || [ -L "$entry" ]; then echo occupied; exit 0; fi; '
+                        'done; echo empty').strip() == b"empty"
+                    if empty:
+                        from patches.ios15.impl.rootfs.system_policy import inspect_volume
+                        selected = self.ctx.slot["data"]
+                        if selected < 4:
+                            log.die("续装不为原机 Data 卷创建 systembag")
+                        volume = next(v for v in Apfs(self.ctx).volumes() if v[0] == selected)
+                        info = inspect_volume(volume[2], selected)
+                        if info["unencrypted"]:
+                            log.die("续装 Data 卷保护模式不匹配")
+                        self.ctx._ios15_new_data = {"slice": selected, "uuid": info["uuid"]}
+                        self.ctx.installation.save_layout()
+            finally:
+                self.ctx.installation.close()
+        log.log("复用已写入的 rootfs：仅续跑 overlay/finalize，保留卷内容与断点。")
+        self.build()
+        self.patch_rootfs()
+
     def _checkpoint_dir(self):
         return self.ctx.wk(".checkpoints")
 
@@ -341,6 +389,7 @@ class Flow:
             log.log(f"  {n}.img4  {os.path.getsize(f) if os.path.exists(f) else '缺'}")
         if not self.ctx.dry_run:
             manifest = dict(target=self.ctx.t["name"], version=self.ctx.t.get("os_version", "13.7"),
+                            native_model=native_device(self.ctx).model,
                             mounts=self.ctx.t["mounts"], bootargs=self.ctx.t["bootargs"],
                             data_protection=self.ctx.t.get("data_protection", "encrypted"),
                             patches=self.ctx.patch_reports,
@@ -488,6 +537,7 @@ class Flow:
         boot = json.loads(path.read_text())
         selection = {layer: [p.id for p in patches] for layer, patches in self.sel.items()}
         return (boot["target"] == self.ctx.t["name"]
+                and boot.get("native_model", "N56") == native_device(self.ctx).model
                 and boot["mounts"] == self.ctx.t["mounts"]
                 and boot.get("data_protection", "encrypted") == self.ctx.t.get("data_protection", "encrypted")
                 and boot["bootargs"] == self.ctx.t["bootargs"]
@@ -500,7 +550,7 @@ class Flow:
         q = run([self.ctx.tool("irecovery"), "-q"], check=False, timeout=10).stdout or b""
         q = q.decode(errors="replace")
         dev = self.ctx.t["device"]
-        model = dev["model"]
+        model = native_device(self.ctx).model.lower() + "ap"
         ecid = dev["ecid"]
         if f"MODEL: {model}" not in q and model not in q.lower():
             log.die(f"连接的设备不是 {model}（irecovery -q 未匹配）。加 --no-identity-check 跳过。")

@@ -126,12 +126,19 @@ class Context:
         if self._derived_ready:
             return
         builder = importlib.import_module(self.t.get("input_builder", "tools.extract_ipsw"))
-        if not self.t.get("ipsw_inputs") and all(
-                os.path.exists(os.path.join(self.derived_root, rel)) for rel in builder.OUTPUTS):
+        native_args = {}
+        if hasattr(builder, "inputs_ready"):
+            from .native_device import native_device
+            native_args = {"model": native_device(self).model}
+            ready = builder.inputs_ready(self.derived_root, **native_args)
+        else:
+            ready = all(os.path.exists(os.path.join(self.derived_root, rel)) for rel in builder.OUTPUTS)
+        if not self.t.get("ipsw_inputs") and ready:
+            self._derived_ready = True
             return
         log.log("从 IPSW 生成构建输入…")
         builder.generate(self.ipsw_input("n56"), self.ipsw_input("n66"),
-                         self.ipsw_input("j96"), out=Path(self.derived_root))
+                         self.ipsw_input("j96"), out=Path(self.derived_root), **native_args)
         self._derived_ready = True
 
     def derived(self, key):
@@ -153,7 +160,9 @@ class Context:
         finally:
             sys.path.pop(0)
         log.log("解密 iBSS/iBEC：设备需处于 DFU…")
-        extract_ipsw.decrypt_iboot(self.ipsw_input("n56"), self.tool("gaster"), self.tool("iBoot64Patcher"))
+        from .native_device import native_device
+        extract_ipsw.decrypt_iboot(self.ipsw_input("n56"), self.tool("gaster"), self.tool("iBoot64Patcher"),
+                                  model=native_device(self).model)
 
     def donor(self, key):
         if key in self.t.get("derived", {}):
@@ -187,6 +196,10 @@ class Context:
         path = self.t.get("ipsw_inputs", {}).get(kind)
         if not path:
             name = self.t.get("source_profiles", {}).get(kind, {}).get("ipsw")
+            if kind == "n56" and self.t.get("version") == "ios15":
+                from .native_device import native_device
+                if native_device(self).model == "N61":
+                    name = "iPhone_4.7_12.5.8_16H88_Restore.ipsw"
             if not name:
                 log.die(f"{kind} profile 未声明 ipsw 文件名")
             path = os.path.join(IPSW_DIR, name)
@@ -223,6 +236,14 @@ class Context:
     def rootfs_dmg(self, kind):
         """rootfs DMG：优先用 ipsw/cache/，否则从 IPSW 提取到该目录。"""
         entry = self.t.get("source_profiles", {}).get(kind, {}).get("rootfs_entry")
+        if kind == "n56" and self.t.get("version") == "ios15":
+            from .native_device import native_device
+            if native_device(self).model == "N61":
+                with zipfile.ZipFile(self.ipsw_input(kind)) as archive:
+                    manifest = plistlib.loads(archive.read("BuildManifest.plist"))
+                    identity = next(i for i in manifest["BuildIdentities"]
+                                    if i["Info"]["DeviceClass"].lower() == "n61ap")
+                    entry = identity["Manifest"]["OS"]["Info"]["Path"]
         if not entry:
             log.die(f"{kind} profile 未声明 rootfs_entry")
         donor_key = kind + "_rootfs_dmg"

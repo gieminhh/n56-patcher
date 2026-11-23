@@ -25,7 +25,7 @@ BUNDLE = "com.apple.driver.AppleBCMWLANFirmware.Hashstore"
 DRIVERS = ("com.apple.iokit.IO80211Family", "com.apple.driver.AppleBCMWLANCore",
            "com.apple.driver.AppleBCMWLANBusInterfacePCIe")
 HOST = "__PLK_DATA_CONST"
-STORAGE_SIZE = 0x98
+STORAGE_SIZE = 0xc0
 DERIVED = Path("ipsw/cache/derived/ios15-19H422")
 APPROVED = {
     "C-4345__s-B1/barbera.trx": "3ba18c1fe074b77ed0d46b9cc43914633b9ca4fe90ae502c9e655d5c11a1c88a",
@@ -33,6 +33,12 @@ APPROVED = {
     "C-4345__s-B1/barbera.txcb": "d687809bfb46fd11ca56f000b17c74e189f703946a83d43fae52e0827505f342",
 }
 ORIGINAL_LENGTHS = dict(zip(APPROVED, (513155, 5653, 310)))
+N61_APPROVED = {
+    "C-4345__s-B1/tempranillo.trx": "3ba18c1fe074b77ed0d46b9cc43914633b9ca4fe90ae502c9e655d5c11a1c88a",
+    "C-4345__s-B1/tempranillo.clmb": "6dbc2bd9fa70517ed3da80e04b590e326523546af28cf83b001e0fad3e19caa8",
+    "C-4345__s-B1/tempranillo.txcb": "7a17d8fb97564207cf7abb416e0c2558ce477f46617e404d80cb90477a346bd8",
+}
+N61_LENGTHS = dict(zip(N61_APPROVED, (513155, 5519, 310)))
 
 
 @dataclass(frozen=True)
@@ -49,7 +55,7 @@ def sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def locate_index(k):
+def locate_index(k, approved=APPROVED):
     """Locate by magic inside the owning kext, then assert the 15 profile."""
     if BUNDLE not in k.kexts or any(b not in k.kexts for b in DRIVERS):
         raise ValueError("missing iOS 15 BCMWLAN/IO80211 kexts")
@@ -73,22 +79,22 @@ def locate_index(k):
     if PROFILE.header + 0x28 not in set(k.slide_slots()):
         raise ValueError("hashstore array pointer lacks native slide ownership")
     index = shared.read_index(k, PROFILE.header, PROFILE.count)
-    if any(shared.path_key(n) not in index for n in APPROVED):
+    if any(shared.path_key(n) not in index for n in approved):
         raise ValueError("missing B1 filename key in iOS 15 hashstore")
     return PROFILE, index
 
 
-def native_files(firmware):
+def native_files(firmware, approved=APPROVED):
     """Check all required files before reading; report each exact missing path."""
     firmware = Path(firmware)
-    missing = [str(firmware / n) for n in APPROVED if not (firmware / n).is_file()]
+    missing = [str(firmware / n) for n in approved if not (firmware / n).is_file()]
     if missing:
         raise FileNotFoundError("missing B1 firmware input:\n" + "\n".join(missing))
-    return shared.native_files(firmware)
+    return shared.native_files(firmware, approved)
 
 
-def check_native(files, native):
-    if set(files) != set(APPROVED):
+def check_native(files, native, approved=APPROVED):
+    if set(files) != set(approved):
         raise ValueError("native firmware must contain exactly the three B1 hash mappings")
     for name, item in files.items():
         digest = bytes.fromhex(item["sha256"])
@@ -125,11 +131,11 @@ def allocate_tail(k, size=STORAGE_SIZE):
                          policy="aligned tail after all kext claims, nonzero bytes and slide slots")
 
 
-def adapt(k, files, native):
-    check_native(files, native)
-    profile, before = locate_index(k)
-    records = {n: before[shared.path_key(n)] for n in APPROVED}
-    approved = all(r["digest"].hex() == APPROVED[n] and r["length"] == ORIGINAL_LENGTHS[n]
+def adapt(k, files, native, *, approved_hashes=APPROVED, original_lengths=ORIGINAL_LENGTHS):
+    check_native(files, native, approved_hashes)
+    profile, before = locate_index(k, approved_hashes)
+    records = {n: before[shared.path_key(n)] for n in approved_hashes}
+    approved = all(r["digest"].hex() == approved_hashes[n] and r["length"] == original_lengths[n]
                    for n, r in records.items())
     already = all(r["digest"].hex() == files[n]["sha256"] and r["length"] == files[n]["bytes"]
                   for n, r in records.items())
@@ -137,7 +143,7 @@ def adapt(k, files, native):
         raise ValueError("unexpected or partially adapted B1 digest/length mappings")
     storage, allocation = (None, None) if already else allocate_tail(k)
     data, report = shared.adapt(k, files, storage, header=profile.header,
-                                expected_count=profile.count, approved=APPROVED,
+                                expected_count=profile.count, approved=approved_hashes,
                                 resize_trx=True)
     if report["new_slide_slots"]:
         shared.add_slide_slots(k, data, report["new_slide_slots"])
@@ -182,7 +188,7 @@ def verify_candidate(k, data, report):
     before = shared.read_index(k, PROFILE.header, PROFILE.count)
     after = shared.read_index(actual, PROFILE.header, PROFILE.count)
     changed = {n for n in before if shared.semantic(before[n]) != shared.semantic(after[n])}
-    expected = set() if report["already_approved"] else {shared.path_key(n) for n in APPROVED}
+    expected = set() if report["already_approved"] else {shared.path_key(n) for n in report["native_files"]}
     if before.keys() != after.keys() or changed != expected:
         raise ValueError("candidate changed unrelated filename mappings")
     for name, item in report["native_files"].items():
@@ -218,14 +224,17 @@ def verify_candidate(k, data, report):
                                                    if s["name"] == "__PRELINK_INFO") - len(actual.xml))
 
 
-def adapt_wifi(input_path, firmware, output, *, native_kernel=None, reference_kernel=None):
+def adapt_wifi(input_path, firmware, output, *, native_kernel=None, reference_kernel=None, model="N56"):
     firmware, output = Path(firmware), Path(output)
-    files = native_files(firmware)  # Missing B1 paths must be reported first.
+    if model not in ("N56", "N61"):
+        raise ValueError("unsupported Wi-Fi model: " + model)
+    approved, lengths = (N61_APPROVED, N61_LENGTHS) if model == "N61" else (APPROVED, ORIGINAL_LENGTHS)
+    files = native_files(firmware, approved)  # Missing B1 paths must be reported first.
     native_path = Path(native_kernel) if native_kernel else firmware.parent / "kernel.raw"
     reference_path = (Path(reference_kernel) if reference_kernel else
                       firmware.parent.parent / "j96/kernel.raw")
     k, native, reference = Kernel(input_path), Kernel(native_path), Kernel(reference_path)
-    locate_index(reference)
+    locate_index(reference, approved)
     # J96's Wi-Fi driver sections must be intact in the composed input. Never
     # copy them over the preceding batch's KC or import an iOS 14 driver.
     for bundle in (BUNDLE, *DRIVERS):
@@ -237,9 +246,9 @@ def adapt_wifi(input_path, firmware, output, *, native_kernel=None, reference_ke
             if segment["vs"] and not (bundle == BUNDLE and segment["name"] == "__DATA_CONST"):
                 if k.read(segment["vm"], segment["vs"]) != reference.read(segment["vm"], segment["vs"]):
                     raise ValueError("input changed the J96 Wi-Fi driver bytes: " + bundle)
-    data, report = adapt(k, files, native)
+    data, report = adapt(k, files, native, approved_hashes=approved, original_lengths=lengths)
     report["validation"] = verify_candidate(k, data, report)
-    report.update(input=str(input_path), input_sha256=sha(k.data),
+    report.update(model=model, input=str(input_path), input_sha256=sha(k.data),
                   reference_kernel=str(reference_path), reference_sha256=sha(reference.data),
                   native_kernel=str(native_path), native_kernel_sha256=sha(native.data),
                   output=str(output), output_sha256=sha(data), hardware_verified=False)

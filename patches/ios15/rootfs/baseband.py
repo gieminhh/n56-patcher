@@ -5,9 +5,10 @@ import shlex
 
 from core.context import REPO
 from core.patch import Patch
+from core.native_device import native_device
 from patches.ios15.impl.rootfs.baseband_firmware import (
     CARRIER_BUNDLES, DEVICE_FIRMWARE, FIRMWARE_PATHS, PERSONALIZED,
-    analyze_resources, build_firmware_root, firmware_report, personalized_files, write_json,
+    analyze_resources, build_donor_firmware_root, build_firmware_root, firmware_report, personalized_files, write_json,
 )
 
 
@@ -18,6 +19,7 @@ class BasebandFirmware(Patch):
     # duplicate can be removed once, not immediately recreated by finish (54 MB).
     role = "finalize"
     feature = "baseband"
+    checkpoint_version = "native-baseband-v2"
     requires = ("rootfs.base_stream",)
     after = ("rootfs.finish",)
     donors = ("n66", "j96")
@@ -29,9 +31,16 @@ class BasebandFirmware(Patch):
         return path if path.is_absolute() else Path(REPO) / "ipsw" / path
 
     def prepare(self, ctx):
-        output = Path(ctx.wk("baseband/firmware"))
-        root = build_firmware_root(self._ipsw(ctx), output)
-        report = firmware_report(self._ipsw(ctx), root)
+        model = native_device(ctx).model
+        if model == "N61" and ctx.donor_dir:
+            ctx.verify_device_system(None)
+            root = build_donor_firmware_root(ctx.donor_dir, ctx.wk("baseband/firmware-n61-donor"))
+            report = {"donor_dir": str(ctx.donor_dir), "model": model, "root": str(root),
+                      "paths": list(FIRMWARE_PATHS), "personalized_required": list(PERSONALIZED)}
+        else:
+            output = Path(ctx.wk("baseband/firmware"))
+            root = build_firmware_root(self._ipsw(ctx), output, model)
+            report = firmware_report(self._ipsw(ctx), root)
         manifest = Path(ctx.wk("baseband/baseband-firmware.json"))
         write_json(manifest, report)
         ctx.patch_reports[self.id] = {**report, "manifest": str(manifest)}

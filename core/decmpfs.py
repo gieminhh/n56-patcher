@@ -16,6 +16,8 @@ import struct
 import subprocess
 from pathlib import Path
 
+from .ios_sdk import iphoneos_sdk
+
 UF_COMPRESSED = 0x20
 XATTR_NOFOLLOW = 0x0001
 XATTR_SHOWCOMPRESSION = 0x0020
@@ -135,9 +137,10 @@ def helper(ctx):
     source = Path(ctx.local("tools/n56-decmpfs.c"))
     output = Path(ctx.wk("n56-decmpfs"))
     output.parent.mkdir(parents=True, exist_ok=True)
-    sdk = subprocess.check_output(["xcrun", "--sdk", "iphoneos", "--show-sdk-path"], text=True).strip()
-    subprocess.run(["xcrun", "--sdk", "iphoneos", "clang", "-arch", "arm64", "-isysroot", sdk,
-                    "-miphoneos-version-min=12.0", "-Os", "-Wall", "-Werror", str(source),
+    sdk = iphoneos_sdk()
+    # 显式指定 iOS target，避免 CLT 的 clang 默认生成 macOS 程序。
+    subprocess.run(["xcrun", "clang", "-target", "arm64-apple-ios12.0", "-isysroot", sdk,
+                    "-Os", "-Wall", "-Werror", str(source),
                     "-o", str(output)], check=True, capture_output=True)
     subprocess.run(["codesign", "-s", "-", "-f", str(output)], check=True, capture_output=True)
     ctx._decmpfs_helper = str(output)

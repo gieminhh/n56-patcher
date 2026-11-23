@@ -58,13 +58,25 @@ def prepare(ctx):
     implementation = Path(__file__).with_name("activation_uik.m")
     modified = max(implementation.stat().st_mtime, Path(__file__).stat().st_mtime)
     if not library.exists() or library.stat().st_mtime < modified:
-        subprocess.run(["xcrun", "--sdk", "iphoneos", "clang", "-arch", "arm64",
-                        "-miphoneos-version-min=15.0", "-Os", "-fobjc-arc", "-dynamiclib",
-                        "-framework", "Foundation", "-framework", "Security",
-                        "-Wl,-not_for_dyld_shared_cache", "-Wl,-undefined,dynamic_lookup",
-                        "-Wl,-no_fixup_chains", "-install_name", "/" + LIBRARY,
-                        str(implementation), "-o", str(library)],
-                       check=True, capture_output=True)
+        sdk_path = None
+        try:
+            res = subprocess.run(["xcrun", "--sdk", "iphoneos", "--show-sdk-path"],
+                                 check=True, capture_output=True, text=True)
+            sdk_path = res.stdout.strip()
+        except Exception:
+            local_sdk = Path(__file__).resolve().parents[4] / "tools" / "sdks" / "iPhoneOS15.6.sdk"
+            if local_sdk.exists():
+                sdk_path = str(local_sdk)
+
+        cmd = ["clang", "-arch", "arm64"]
+        if sdk_path:
+            cmd += ["-isysroot", sdk_path]
+        cmd += ["-miphoneos-version-min=15.0", "-Os", "-fobjc-arc", "-dynamiclib",
+                "-framework", "Foundation", "-framework", "Security",
+                "-Wl,-not_for_dyld_shared_cache", "-Wl,-undefined,dynamic_lookup",
+                "-Wl,-no_fixup_chains", "-install_name", "/" + LIBRARY,
+                str(implementation), "-o", str(library)]
+        subprocess.run(cmd, check=True, capture_output=True)
         subprocess.run(["codesign", "-s", "-", "-f", "--digest-algorithm=sha256", str(library)],
                        check=True, capture_output=True)
     source = Path(ctx.mount_rootfs("j96")) / PATH

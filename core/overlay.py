@@ -58,6 +58,9 @@ class SourceOverlay(Patch):
     mount = "/mnt6"
     items = ()
 
+    def items_for(self, ctx):
+        return self.items
+
     @staticmethod
     def device_copy_command(item, source, dest):
         operation = {
@@ -74,7 +77,7 @@ class SourceOverlay(Patch):
     def apply(self, ctx, art=None):
         ssh = ctx.ssh
         ssh.mount(ctx.t["mounts"]["system_b"], self.mount)
-        for item in self.items:
+        for item in self.items_for(ctx):
             kind, profile, path = parse_source(item.source)
             dest = self.mount + "/" + item.dest
             log.log(f"  {item.op}: {item.source} → /{item.dest}")

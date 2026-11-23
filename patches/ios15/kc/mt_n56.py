@@ -2,6 +2,7 @@
 from pathlib import Path
 
 from core.patch import Patch
+from core.native_device import native_device
 from patches.shared.impl.common.macho import Kernel
 from patches.shared.impl.kc.n56_touch import touch
 
@@ -17,5 +18,5 @@ class Touch(Patch):
     def apply(self, ctx, art):
         native = Kernel(Path(ctx.derived_root) / "n56/kernel.raw")
         output = Path(ctx.wk("kc.mt_n56.raw"))
-        output.write_bytes(touch(native, Kernel(art)))
+        output.write_bytes(touch(native, Kernel(art), native_device(ctx).model))
         return str(output)

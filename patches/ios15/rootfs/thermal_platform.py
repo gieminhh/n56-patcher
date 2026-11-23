@@ -6,6 +6,7 @@ from patches.ios15.impl.rootfs.thermal.build import DAEMON, prepare
 class ThermalPlatform(SourceOverlay):
     id = 'rootfs.thermal_platform'
     feature = 'core'
+    checkpoint_version = 'native-thermal-v2'
     requires = ('rootfs.base_stream', 'rootfs.n56_model_files')
     note = 'N56 16H88 原生温控模型；保留 15 chained fixups 与正常休眠接口'
     items = (

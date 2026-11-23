@@ -3,6 +3,7 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
+from core.native_device import DEVICES, native_device
 
 PATCH_ID = "rootfs.bluetoothd"
 PRESERVE_METADATA = "--preserve-metadata=identifier,entitlements,requirements,flags"
@@ -35,9 +36,18 @@ PATCHES = (
 )
 
 
-def patch_data(source):
+def patches_for(model="N56"):
+    product = DEVICES[model].product_type
+    tail = int.from_bytes(product[16:], "little")
+    instructions = ((0x52800008 | ((tail & 0xffff) << 5)).to_bytes(4, "little") +
+                    (0x72a00008 | ((tail >> 16) << 5)).to_bytes(4, "little"))
+    return tuple((offset, before, product[:16] if i in (0, 2) else instructions if i in (1, 3) else after)
+                 for i, (offset, before, after) in enumerate(PATCHES))
+
+
+def patch_data(source, model="N56"):
     data = bytearray(source)
-    for offset, before, after in PATCHES:
+    for offset, before, after in patches_for(model):
         if data[offset:offset + len(before)] != before:
             raise ValueError(f"bluetoothd patch before 不匹配: 0x{offset:x}")
         data[offset:offset + len(after)] = after
@@ -55,7 +65,7 @@ def build_bluetoothd(ctx):
     directory.mkdir(parents=True, exist_ok=True)
     output = directory / "bluetoothd.n56"
     source = Path(ctx.mount_rootfs("j96")) / "usr/sbin/bluetoothd"
-    output.write_bytes(patch_data(source.read_bytes()))
+    output.write_bytes(patch_data(source.read_bytes(), native_device(ctx).model))
     _sign(output)
     return str(output)
 

@@ -38,13 +38,13 @@ def section_record(name, segment, vm, size, file, flags=0, alignment=3):
                        alignment, 0, 0, flags, 0, 0, 0)
 
 
-def make_class(image, metadata, methods):
+def make_class(image, metadata, methods, class_name=N56_CLASS):
     common = image.classes()['CommonProduct']
     common_meta = image.pointer(common)
     ro_common = image.pointer(common + 32) & ~7
     instance_size = image.u32(ro_common + 8)
     cls, meta, ro, meta_ro = (metadata.reserve(n) for n in (40, 40, 72, 72))
-    table, name = metadata.reserve(8 + len(METHODS) * 24), metadata.string(N56_CLASS)
+    table, name = metadata.reserve(8 + len(METHODS) * 24), metadata.string(class_name)
     metadata.pointer(cls, meta)
     metadata.pointer(cls + 8, common)
     metadata.pointer(cls + 32, ro)
@@ -192,11 +192,11 @@ def write_image(image, metadata, code, classlist, additions):
     return result
 
 
-def embed(source, native_data):
+def embed(source, native_data, model="N56"):
     image, native = Image(source), Image(native_data)
     if image.chained_command is None:
         raise ValueError('iOS15 daemon must use LC_DYLD_CHAINED_FIXUPS')
-    profile = discover(native, image)
+    profile = discover(native, image, model)
     metadata = Metadata(image.segment('__DATA')['vm'] + image.segment('__DATA')['size'])
     importer = NativeImporter(native, image, metadata, profile)
     code, methods = bytearray(), {}
@@ -204,7 +204,7 @@ def embed(source, native_data):
         at = metadata.base + PAGE + len(code)
         raw, methods[method] = importer.import_method(method, at)
         code.extend(raw)
-    cls = make_class(image, metadata, methods)
+    cls = make_class(image, metadata, methods, profile['class_name'])
     classref = metadata.reserve(8)
     metadata.pointer(classref, cls)
     factory = metadata.base + PAGE + len(code)
@@ -230,7 +230,7 @@ def embed(source, native_data):
     result = write_image(image, metadata, code, classlist, additions)
     at = image.offset(profile['factory'])
     struct.pack_into('<I', result, at, pc_field(0x14000000, profile['factory'], factory, 26, 2, 0))
-    report = dict(class_name=N56_CLASS, class_address=hex(cls), factory_hook=hex(profile['factory']),
+    report = dict(class_name=profile['class_name'], model=model, class_address=hex(cls), factory_hook=hex(profile['factory']),
                   factory=hex(factory), factory_create=hex(profile['factory_create']),
                   sensor_writer=hex(profile['writer']), product_id=hex(profile['product_id']),
                   native_product_id_site=hex(profile['native_product_site']), primary_sensor_array=hex(profile['target_input']),
@@ -238,7 +238,8 @@ def embed(source, native_data):
                   relocated_references=importer.relocations, native_constants=len(importer.constants),
                   original_fixups=len(image.fixups), added_fixups=len(metadata.slots),
                   imported_symbols=len(image.imports), pointer_format=6,
-                  inherited_sleep=hex(profile['sleep']), native_filter_state='-1.0f,-1,-1',
+                  inherited_sleep=hex(profile['sleep']),
+                  native_filter_state='-1.0f,-1' if model == 'N61' else '-1.0f,-1,-1',
                   sleep_policy='inherit iOS15 CommonProduct.canSystemSleep; retain ThermalManager and PM callback',
                   omitted='iOS12 AGGD/context telemetry tail only; no old ivar in iOS15',
                   unwind='existing unwind tables unchanged; no new compact-unwind entries')

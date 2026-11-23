@@ -30,7 +30,7 @@ TARGET = {
     "jailbreak_layout_features": {"rootless": ["rootless"], "rootful": ["rootful"]},
     "data_protection": "encrypted",
     "data_protection_modes": ["none", "encrypted"],
-    "ramdisk_port": 2223,
+    "ramdisk_port": 2222,
     "ramdisk_password": "alpine",
     "ramdisk_dir": "tools/SSHRD_Script/sshramdisk",
     "full_trustcache": True,

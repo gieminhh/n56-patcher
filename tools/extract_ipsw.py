@@ -75,14 +75,16 @@ def copy_wifi(ipsw, dest, work):
         run('hdiutil', 'detach', mountpoint)
 
 
-def decrypt_iboot(ipsw, gaster, patcher, out=OUT):
+def decrypt_iboot(ipsw, gaster, patcher, out=OUT, model='N56'):
     """解密 iBSS/iBEC 并给 iBSS 打补丁。设备需处于 DFU（密钥由设备 AES 引擎解开）。"""
     dest = out / 'extracted/n56ap_ios12'
     dest.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
-        ibss = extract_member(ipsw, 'Firmware/dfu/iBSS.n56.RELEASE.im4p', work)
-        ibec = extract_member(ipsw, 'Firmware/dfu/iBEC.n56.RELEASE.im4p', work)
+        if model not in ('N56', 'N61'):
+            raise ValueError('unsupported iBoot model: ' + model)
+        ibss = extract_member(ipsw, f'Firmware/dfu/iBSS.{model.lower()}.RELEASE.im4p', work)
+        ibec = extract_member(ipsw, f'Firmware/dfu/iBEC.{model.lower()}.RELEASE.im4p', work)
         run(gaster, 'pwn')
         run(gaster, 'decrypt', ibss, work / 'iBSS.dec')
         run(gaster, 'decrypt', ibec, dest / 'iBEC.n56.dec')

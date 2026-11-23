@@ -24,6 +24,7 @@ WHITELIST = {
         "System/Library/Frameworks/MediaToolbox.framework/N56",
         "System/Library/PrivateFrameworks/ACTFramework.framework/N56",
         "System/Library/ProductDocuments/RegulatoryImages",
+        "System/Library/Watchdog/ThermalMonitor.bundle/ThermalMonitor",
         "System/Library/Watchdog/ThermalMonitor.bundle/N56AP.bundle/Info.plist",
         "Library/Audio/Tunings/N56",
         # 出厂校准数据（factorydata）
@@ -38,16 +39,22 @@ WHITELIST = {
 }
 
 
-def union():
-    """所有版本的并集，去重并保持首次出现的顺序。"""
+def union(model="N56"):
+    """所有版本的并集，去重并保持首次出现的顺序。支持 N56 / N61 动态替换。"""
     seen = []
     for paths in WHITELIST.values():
         for path in paths:
-            if path not in seen:
-                seen.append(path)
+            p = path
+            if model and model != "N56":
+                p = p.replace("N56AP", model + "AP").replace("N56", model)
+            if p not in seen:
+                seen.append(p)
     return tuple(seen)
 
 
 def covers(path):
     """路径是否落在白名单的某个条目下（条目本身或其子路径）。"""
-    return any(path == entry or path.startswith(entry + "/") for entry in union())
+    for m in ("N56", "N61"):
+        if any(path == entry or path.startswith(entry + "/") for entry in union(m)):
+            return True
+    return False

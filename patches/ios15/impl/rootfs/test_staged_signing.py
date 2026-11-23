@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 import plistlib
+import shutil
 import struct
 import tempfile
 from types import SimpleNamespace
@@ -83,6 +84,36 @@ class StagedDeployOrderTests(unittest.TestCase):
             self.assertEqual(record['source'], 'n66-original-system-app')
             self.assertTrue(record['app_store_reinstall_compatible'])
             self.assertFalse(any('-s' in call.args[0] for call in codesign.call_args_list))
+
+            # A copied cache must rebuild in its new location and verify the
+            # original Apple seal, without following the previous receipt paths.
+            moved = root / 'moved-output'
+            shutil.copytree(output, moved)
+            (bundle / 'Assets.car').write_bytes(b'changed-old-workdir')
+            (moved / 'payload' / relative / 'Assets.car').write_bytes(b'changed-copy')
+            with patch.object(impl, 'entitlements', return_value=(entitlements, entitlement_bytes)), \
+                 patch.object(impl, 'run') as verify, \
+                 patch.object(impl.TrustCache, '_cdhash', return_value=b'N' * 20):
+                relocated = impl.build_bundle(n66, j96, row, moved, versions)
+                new_bundle = moved / 'payload' / relative
+                new_signature = moved / 'payload' / impl.SIGNATURE_SCOPE / identifier
+                self.assertEqual(Path(relocated['output_bundle']), new_bundle)
+                self.assertEqual(Path(relocated['signature']), new_signature)
+                self.assertEqual((new_bundle / 'Assets.car').read_bytes(), b'iphone-assets')
+                self.assertEqual(new_signature.read_bytes(), native_signature)
+                self.assertTrue(all(Path(x['path']).is_relative_to(moved / 'payload')
+                                    for x in relocated['artifact_checks']))
+                verify.assert_called_once_with(['codesign', '--verify', '--strict', '--deep',
+                                                '--detached', new_signature, new_bundle])
+                # An unchanged local cache remains reusable without resealing.
+                verify.reset_mock()
+                self.assertEqual(impl.build_bundle(n66, j96, row, moved, versions), relocated)
+                verify.assert_not_called()
+                # Relocation handling must not weaken same-location corruption guards.
+                (new_bundle / 'Assets.car').write_bytes(b'changed-local-artifact')
+                with self.assertRaisesRegex(MaterialError, 'changed cached staged artifact'):
+                    impl.build_bundle(n66, j96, row, moved, versions)
+                verify.assert_not_called()
 
     def test_initialized_encrypted_data_repair_only_changes_staged_bundle_ownership(self):
         session = Mock()

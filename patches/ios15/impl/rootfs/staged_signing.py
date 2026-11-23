@@ -168,11 +168,14 @@ def build_bundle(n66, j96, row, output, versions):
     record_path = output / 'records' / (identifier + '.json')
     if record_path.is_file():
         record = json.loads(record_path.read_text())
-        if record.get('input_fingerprint') == stamp:
+        # A copied workdir retains absolute receipt paths. Treat relocation as
+        # a cache miss and rebuild from the verified sources below; never read
+        # artifacts from the other workdir or merely relabel their receipts.
+        same_location = (Path(record.get('output_bundle', '')).resolve() == target.resolve()
+                         and Path(record.get('signature', '')).resolve() == signature.resolve())
+        if record.get('input_fingerprint') == stamp and same_location:
             if (record.get('bundle') != relative or record.get('status') != 'sealed-verified'
                     or record.get('source') != 'n66-original-system-app'
-                    or Path(record['output_bundle']).resolve() != target.resolve()
-                    or Path(record['signature']).resolve() != signature.resolve()
                     or record.get('signature_dest') != SIGNATURE_SCOPE + '/' + identifier):
                 raise MaterialError('cached staged record paths/registration mismatch: ' + identifier)
             if record.get('native_paths') != native_paths(target, row['code_comparison']):

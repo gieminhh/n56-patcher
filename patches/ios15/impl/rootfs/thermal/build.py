@@ -18,6 +18,7 @@ import subprocess
 
 from .chained import Image
 from .embed import embed
+from core.native_device import native_device
 
 DAEMON = 'usr/libexec/thermalmonitord'
 NATIVE = 'System/Library/Watchdog/ThermalMonitor.bundle/ThermalMonitor'
@@ -60,7 +61,8 @@ def signature_record(path):
 def validate(source, artifact, model):
     """One narrow structural audit, not a boot/runtime test."""
     before, after = Image(source), Image(artifact)
-    from .native import N56_CLASS, METHODS, disassembler
+    from .native import METHODS, disassembler
+    class_name = model['class_name']
     if after.chained_command is None:
         raise ValueError('output lost chained fixups')
     if any(k in (0x22, 0x80000022) for k, _, _ in after.commands):
@@ -85,10 +87,10 @@ def validate(source, artifact, model):
         if size != newsize or source[a:a + size] != artifact[b:b + size]:
             raise ValueError('exports/data-in-code bytes changed')
     classes = before.classes()
-    expected = dict(classes, **{N56_CLASS: int(model['class_address'], 16)})
+    expected = dict(classes, **{class_name: int(model['class_address'], 16)})
     if after.classes() != expected:
         raise ValueError('Objective-C class registration differs')
-    methods = after.methods(after.classes()[N56_CLASS])
+    methods = after.methods(after.classes()[class_name])
     if set(methods) != set(METHODS):
         raise ValueError('native method registration differs')
     for name, record in methods.items():
@@ -147,7 +149,7 @@ def unsigned_content(data):
     return raw
 
 
-def build(source, output, native_source):
+def build(source, output, native_source, *, model="N56"):
     source, output, native_source = Path(source), Path(output).resolve(), Path(native_source)
     raw, native_raw = source.read_bytes(), native_source.read_bytes()
     if sha(raw) != SOURCE_SHA256 or sha(native_raw) != NATIVE_SHA256:
@@ -160,12 +162,13 @@ def build(source, output, native_source):
     helper_bytes = b''.join(Path(__file__).with_name(name).read_bytes()
                             for name in ('build.py', 'chained.py', 'native.py', 'embed.py'))
     fingerprint = dict(builder_version=BUILDER_VERSION, helper_sha256=sha(helper_bytes),
-                       source_sha256=sha(raw), native_sha256=sha(native_raw))
+                       source_sha256=sha(raw), native_sha256=sha(native_raw), model=model)
     if report_path.exists() and daemon.exists():
         report = json.loads(report_path.read_text())
         if report.get('fingerprint') == fingerprint and report['signature']['sha256'] == sha(daemon.read_bytes()):
             return {'daemon': str(daemon)}
-    unsigned, model = embed(raw, native_raw)
+    native_model = model
+    unsigned, model = embed(raw, native_raw, native_model)
     structural = validate(raw, unsigned, model)
     # Preserve source metadata before writing/re-signing the copy, never the input.
     original_signature = signature_record(source)
@@ -194,8 +197,10 @@ def build(source, output, native_source):
                   artifact=str(daemon), unsigned_sha256=sha(unsigned), signature=signed,
                   source_signature=original_signature, structural=structural,
                   model_report=str(model_path), signing_inputs=dict(paths=[str(daemon)], cache_plans=[]),
-                  required_config=dict(patch_id='rootfs.n56_model_files', dest=DEST_CONFIG, source=NATIVE_CONFIG,
-                                       sha256=CONFIG_SHA256),
+                  required_config=dict(patch_id='rootfs.n56_model_files',
+                                       dest=DEST_CONFIG.replace('N56', native_model),
+                                       source=NATIVE_CONFIG.replace('N56', native_model),
+                                       sha256=sha((native_source.parent / (native_model + 'AP.bundle/Info.plist')).read_bytes())),
                   limitations=['No ARM execution, boot/device/sleep verification',
                                'No new unwind records for imported methods',
                                'No AGGD legacy telemetry or dyld cache writeback',
@@ -211,7 +216,7 @@ def prepare(ctx):
         source = Path(ctx.mount_rootfs('j96')) / DAEMON
         donor = getattr(ctx, 'donor_dir', None)
         native = Path(donor or ctx.mount_rootfs('n56')) / NATIVE
-        ctx._thermal15_platform = build(source, ctx.wk('thermal'), native)
+        ctx._thermal15_platform = build(source, ctx.wk('thermal'), native, model=native_device(ctx).model)
     if hasattr(ctx, 'patch_reports'):
         daemon = Path(ctx._thermal15_platform['daemon'])
         ctx.patch_reports[PATCH_ID] = json.loads((daemon.parent / 'build-report.json').read_text())
